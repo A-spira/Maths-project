@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Environnement virtuel
+.venv/
+
+# Fichiers locaux (Claude Code, macOS)
+CLAUDE.md
+.claude/
+.DS_Store
