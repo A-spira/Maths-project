@@ -28,6 +28,7 @@ class SimpleSLPRegressor(BaseSLPEstimator):
         validation_fraction: float = 0.1,
         n_iter_no_change: int = 10,
         tol: float = 1e-4,
+        alpha: float = 0.0,
     ) -> None:
         """
         Initialize the SLP regressor.
@@ -37,7 +38,7 @@ class SimpleSLPRegressor(BaseSLPEstimator):
         hidden_layer_size : int
             Number of neurons in the hidden layer
         activation : str
-            Activation function ('logistic', 'tanh', 'relu'), default='logistic'
+            Activation function ('identity', 'logistic', 'tanh', 'relu'), default='logistic'
         learning_rate : float
             Learning rate for gradient descent
         max_iter : int
@@ -56,6 +57,8 @@ class SimpleSLPRegressor(BaseSLPEstimator):
             Number of epochs without improvement allowed before stopping
         tol : float
             Minimum decrease of the validation loss that counts as an improvement
+        alpha : float
+            L2 regularization strength; 0 disables regularization
         """
         super().__init__(
             hidden_layer_size,
@@ -69,6 +72,7 @@ class SimpleSLPRegressor(BaseSLPEstimator):
             validation_fraction,
             n_iter_no_change,
             tol,
+            alpha,
         )
 
     def _validate_y(self, y: Any, n_samples: int) -> NDArray[np.floating]:
@@ -251,6 +255,8 @@ class SimpleSLPRegressor(BaseSLPEstimator):
         Return the R² score on the given test data.
 
         R² = 1 - SS_res / SS_tot. With several outputs, the scores are averaged.
+        R² is undefined when y is constant, so this case returns 1 for an exact
+        prediction and 0 otherwise.
 
         Parameters:
         -----------
@@ -270,4 +276,10 @@ class SimpleSLPRegressor(BaseSLPEstimator):
         ss_res = np.sum((y_true - y_pred) ** 2, axis=0)  # shape: (K,)
         # Squared error of a model that always predicts the mean, for each output.
         ss_tot = np.sum((y_true - np.mean(y_true, axis=0)) ** 2, axis=0)  # shape: (K,)
-        return float(np.mean(1.0 - ss_res / ss_tot))
+        # Max minus min is exactly 0 for a constant y, whereas rounding in the mean
+        # can leave ss_tot slightly above 0 (for example 2.3e-32 with y = 0.1).
+        is_constant = np.ptp(y_true, axis=0) == 0  # shape: (K,)
+        # Divide by 1 on constant outputs to avoid a division by zero; replaced below.
+        r2 = 1.0 - ss_res / np.where(is_constant, 1.0, ss_tot)  # shape: (K,)
+        constant_r2 = np.where(ss_res == 0, 1.0, 0.0)  # shape: (K,)
+        return float(np.mean(np.where(is_constant, constant_r2, r2)))

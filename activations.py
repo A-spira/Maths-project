@@ -10,6 +10,42 @@ from numpy.typing import NDArray
 LOGISTIC_CLIP: float = 500.0
 
 
+def identity(z: NDArray[np.floating]) -> NDArray[np.floating]:
+    """
+    Identity activation function: identity(z) = z.
+
+    With this hidden activation, the whole network is an affine function of its input.
+
+    Parameters:
+    -----------
+    z : array-like
+        Input values
+
+    Returns:
+    --------
+    array-like
+        The same values, same shape as z
+    """
+    return z  # shape: same as z
+
+
+def identity_derivative(z: NDArray[np.floating]) -> NDArray[np.floating]:
+    """
+    Derivative of identity activation: 1 everywhere.
+
+    Parameters:
+    -----------
+    z : array-like
+        Input values (pre-activation)
+
+    Returns:
+    --------
+    array-like
+        Gradient values, same shape as z
+    """
+    return np.ones_like(z, dtype=float)  # shape: same as z
+
+
 def relu(z: NDArray[np.floating]) -> NDArray[np.floating]:
     """
     ReLU activation function: relu(z) = max(0, z).
