@@ -35,6 +35,7 @@ class SimpleSLPClassifier(BaseSLPEstimator):
         validation_fraction: float = 0.1,
         n_iter_no_change: int = 10,
         tol: float = 1e-4,
+        alpha: float = 0.0,
     ) -> None:
         """
         Initialize the SLP classifier.
@@ -44,7 +45,7 @@ class SimpleSLPClassifier(BaseSLPEstimator):
         hidden_layer_size : int
             Number of neurons in the hidden layer
         activation : str
-            Activation function ('logistic', 'tanh', 'relu'), default='logistic'
+            Activation function ('identity', 'logistic', 'tanh', 'relu'), default='logistic'
         learning_rate : float
             Learning rate for gradient descent
         max_iter : int
@@ -63,6 +64,8 @@ class SimpleSLPClassifier(BaseSLPEstimator):
             Number of epochs without improvement allowed before stopping
         tol : float
             Minimum decrease of the validation loss that counts as an improvement
+        alpha : float
+            L2 regularization strength; 0 disables regularization
         """
         super().__init__(
             hidden_layer_size,
@@ -76,6 +79,7 @@ class SimpleSLPClassifier(BaseSLPEstimator):
             validation_fraction,
             n_iter_no_change,
             tol,
+            alpha,
         )
 
         # Classifier-specific attributes

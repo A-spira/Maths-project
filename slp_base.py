@@ -9,6 +9,8 @@ import warnings
 import numpy as np
 from numpy.typing import NDArray
 from activations import (
+    identity,
+    identity_derivative,
     relu,
     relu_derivative,
     tanh,
@@ -22,7 +24,7 @@ ADAM_BETA1: float = 0.9  # Decay rate of the running mean of gradients
 ADAM_BETA2: float = 0.999  # Decay rate of the running mean of squared gradients
 ADAM_EPSILON: float = 1e-8  # Avoids a division by zero in the Adam step
 
-VALID_ACTIVATIONS: Tuple[str, ...] = ("logistic", "tanh", "relu")
+VALID_ACTIVATIONS: Tuple[str, ...] = ("identity", "logistic", "tanh", "relu")
 VALID_SOLVERS: Tuple[str, ...] = ("sgd", "adam")
 
 
@@ -47,6 +49,7 @@ class BaseSLPEstimator(ABC):
         validation_fraction: float = 0.1,
         n_iter_no_change: int = 10,
         tol: float = 1e-4,
+        alpha: float = 0.0,
     ) -> None:
         """
         Initialize the SLP estimator.
@@ -59,7 +62,7 @@ class BaseSLPEstimator(ABC):
         hidden_layer_size : int
             Number of neurons in the hidden layer
         activation : str
-            Activation function ('logistic', 'tanh', 'relu'), default='logistic'
+            Activation function ('identity', 'logistic', 'tanh', 'relu'), default='logistic'
         learning_rate : float
             Learning rate for gradient descent
         max_iter : int
@@ -78,6 +81,8 @@ class BaseSLPEstimator(ABC):
             Number of epochs without improvement allowed before stopping
         tol : float
             Minimum decrease of the validation loss that counts as an improvement
+        alpha : float
+            L2 regularization strength; 0 disables regularization
         """
         self.hidden_layer_size: int = hidden_layer_size
         self.activation: str = activation
@@ -90,6 +95,7 @@ class BaseSLPEstimator(ABC):
         self.validation_fraction: float = validation_fraction
         self.n_iter_no_change: int = n_iter_no_change
         self.tol: float = tol
+        self.alpha: float = alpha
 
         # To be initialized in fit()
         self.W1_: Optional[NDArray[np.floating]] = None  # Weights: input -> hidden
@@ -157,6 +163,9 @@ class BaseSLPEstimator(ABC):
         self._check_real("tol", self.tol)
         if self.tol < 0:
             raise ValueError(f"tol must be >= 0, got {self.tol!r}.")
+        self._check_real("alpha", self.alpha)
+        if self.alpha < 0:
+            raise ValueError(f"alpha must be >= 0, got {self.alpha!r}.")
 
     def _validate_X(self, X: Any, reset: bool = False) -> NDArray[np.floating]:
         """
@@ -203,7 +212,9 @@ class BaseSLPEstimator(ABC):
         self,
     ) -> Tuple[Callable[[NDArray], NDArray], Callable[[NDArray], NDArray]]:
         """Return the activation function and its derivative."""
-        if self.activation == "relu":
+        if self.activation == "identity":
+            return identity, identity_derivative
+        elif self.activation == "relu":
             return relu, relu_derivative
         elif self.activation == "tanh":
             return tanh, tanh_derivative
@@ -365,6 +376,41 @@ class BaseSLPEstimator(ABC):
         train_indices = indices[n_val:]  # shape: (n - n_val,)
         return X[train_indices], y[train_indices], X[val_indices], y[val_indices]
 
+    def _objective_and_gradients(
+        self, X: NDArray[np.floating], y: NDArray[np.floating]
+    ) -> Tuple[float, Tuple[NDArray, NDArray, NDArray, NDArray]]:
+        """
+        Compute the training objective and its gradients on one batch.
+
+        Objective = loss + alpha / (2m) * (||W1||^2 + ||W2||^2), with m samples.
+        Biases are not penalized: they only shift the output and do not make the
+        model more sensitive to its inputs.
+
+        Parameters:
+        -----------
+        X : array, shape (m, n_features)
+            Batch of input data
+        y : array, shape (m, n_outputs)
+            Batch of encoded targets
+
+        Returns:
+        --------
+        objective : float
+            Loss plus L2 penalty
+        gradients : tuple of arrays
+            dW1, db1, dW2, db2, including the penalty
+        """
+        n_samples = X.shape[0]
+        z1, a1, z2, y_pred = self._forward_propagation(X)
+        # Squared Frobenius norm of the weights: the sum of all squared weights.
+        squared_norm = np.sum(self.W1_**2) + np.sum(self.W2_**2)
+        objective = self._compute_loss(y, y_pred) + self.alpha / (2 * n_samples) * squared_norm
+        dW1, db1, dW2, db2 = self._backward_propagation(X, y, z1, a1, z2, y_pred)
+        # The derivative of alpha / (2m) * W^2 with respect to W is alpha / m * W.
+        dW1 = dW1 + self.alpha / n_samples * self.W1_  # shape: (d, h)
+        dW2 = dW2 + self.alpha / n_samples * self.W2_  # shape: (h, K)
+        return objective, (dW1, db1, dW2, db2)
+
     def _run_epoch(
         self,
         X: NDArray[np.floating],
@@ -389,7 +435,7 @@ class BaseSLPEstimator(ABC):
         Returns:
         --------
         loss : float
-            Mean of the batch losses, weighted by the size of each batch
+            Mean of the batch objectives, weighted by the size of each batch
         """
         n_samples = X.shape[0]
         # A new random order at each epoch, so that batches differ between epochs.
@@ -399,10 +445,9 @@ class BaseSLPEstimator(ABC):
         for start in range(0, n_samples, batch_size):
             batch = order[start : start + batch_size]  # shape: (m,), the last may be smaller
             X_batch, y_batch = X[batch], y[batch]  # shapes: (m, d) and (m, K)
-            z1, a1, z2, y_pred = self._forward_propagation(X_batch)
+            objective, gradients = self._objective_and_gradients(X_batch, y_batch)
             # Multiply by m because the last batch may be smaller than the others.
-            total_loss += self._compute_loss(y_batch, y_pred) * batch.shape[0]
-            gradients = self._backward_propagation(X_batch, y_batch, z1, a1, z2, y_pred)
+            total_loss += objective * batch.shape[0]
             self._update_parameters(*gradients)
         return total_loss / n_samples
 
@@ -474,6 +519,7 @@ class BaseSLPEstimator(ABC):
 
                 if self.early_stopping:
                     val_prediction = self._forward_propagation(X_val)[3]  # shape: (n_val, K)
+                    # The penalty is left out: this measures prediction quality only.
                     val_loss = self._compute_loss(y_val, val_prediction)
                     self.validation_loss_curve_.append(float(val_loss))
                     # Only a decrease larger than tol counts as an improvement.
